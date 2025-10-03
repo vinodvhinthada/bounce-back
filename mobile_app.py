@@ -1,12 +1,8 @@
 """
-ENHANCED MOBILE APP WITH DATA POPULATION & REFRESH BUTTON
-========================================================
-Replace your mobile_app.py with this enhanced version that includes:
-- Fixed data parsing for Angel One API
-- Manual refresh button
-- Auto-refresh every 30 seconds
-- Better error handling
-- Sample data fallback
+MOBILE ANGEL ONE MARKET ANALYSIS - COMPLETE WEBAPP
+==================================================
+This is the mobile-optimized version of your comprehensive market analysis app
+with Angel One API integration, NIFTY 50/Bank NIFTY analysis, and PCR data.
 """
 
 import os
@@ -16,6 +12,7 @@ from flask import Flask, render_template_string
 import logging
 import json
 from datetime import datetime
+import time
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -23,38 +20,59 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
+# Configuration from environment variables
+API_KEY = os.getenv('ANGEL_API_KEY', 'tKo2xsA5')
+USERNAME = os.getenv('ANGEL_USERNAME', 'C125633')
+PASSWORD = os.getenv('ANGEL_PASSWORD', '4111')
+TOTP_TOKEN = os.getenv('ANGEL_TOTP_TOKEN', 'TZZ2VTRBUWPB33SLOSA3NXSGWA')
+
+# NIFTY 50 STOCKS WITH WEIGHTAGE
+NIFTY50_STOCKS = {
+    'RELIANCE': 9.37, 'HDFCBANK': 7.50, 'BHARTIARTL': 5.76, 'TCS': 5.33, 'ICICIBANK': 4.96,
+    'SBIN': 4.03, 'BAJFINANCE': 3.11, 'INFY': 3.04, 'HINDUNILVR': 3.01, 'ITC': 2.57,
+    'LT': 2.55, 'MARUTI': 2.54, 'M&M': 2.18, 'KOTAKBANK': 2.07, 'SUNPHARMA': 1.99,
+    'HCLTECH': 1.91, 'AXISBANK': 1.82, 'ULTRACEMCO': 1.81, 'NTPC': 1.67, 'BAJAJFINSV': 1.62,
+    'ZOMATO': 1.61, 'ADANIPORTS': 1.55, 'ONGC': 1.55, 'TITAN': 1.53, 'ADANIENT': 1.51,
+    'BEL': 1.50, 'JSWSTEEL': 1.42, 'TATAMOTORS': 1.34, 'POWERGRID': 1.32, 'WIPRO': 1.28,
+    'BAJAJ-AUTO': 1.22, 'COALINDIA': 1.21, 'NESTLEIND': 1.14, 'ASIANPAINT': 1.13, 'TATASTEEL': 1.06,
+    'EICHERMOT': 0.97, 'JIOFINANCIAL': 0.96, 'GRASIM': 0.96, 'SBILIFE': 0.91, 'HINDALCO': 0.87,
+    'TRENT': 0.87, 'HDFCLIFE': 0.83, 'TECHM': 0.70, 'CIPLA': 0.62, 'SHRIRAMFIN': 0.62,
+    'TATACONSUM': 0.57, 'HEROMOTOCO': 0.55, 'APOLLOHOSP': 0.54, 'DRREDDY': 0.53, 'INDUSINDBK': 0.29
+}
+
+# BANK NIFTY STOCKS WITH WEIGHTAGE
+BANKNIFTY_STOCKS = {
+    'HDFCBANK': 32.06, 'ICICIBANK': 21.20, 'SBIN': 17.24, 'KOTAKBANK': 8.87, 'AXISBANK': 7.78,
+    'BANKBARODA': 2.90, 'PNB': 2.80, 'CANARABANK': 2.42, 'IDFCFIRSTB': 1.28, 'INDUSINDBK': 1.25,
+    'AUBANK': 1.17, 'FEDERALBNK': 1.03
+}
+
 class MobileAngelClient:
-    """Enhanced Angel One client with better data handling"""
+    def __init__(self):
+        self.auth_token = None
+        self.base_url = "https://apiconnect.angelone.in"
+        self.login()
     
-    def __init__(self, api_key, username, password, totp_token):
-        self.api_key = api_key
-        self.username = username
-        self.password = password
-        self.totp_token = totp_token
-        self.access_token = None
-        self.base_url = "https://apiconnect.angelbroking.com"
-        
-    def generate_session(self):
-        """Generate session and get access token"""
+    def login(self):
+        """Authenticate with Angel One API"""
         try:
-            totp = pyotp.TOTP(self.totp_token)
-            current_totp = totp.now()
+            totp = pyotp.TOTP(TOTP_TOKEN).now()
             
             login_data = {
-                "clientcode": self.username,
-                "password": self.password,
-                "totp": current_totp
+                "clientcode": USERNAME,
+                "password": PASSWORD,
+                "totp": totp
             }
             
             headers = {
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "X-UserType": "USER",
-                "X-SourceID": "WEB",
-                "X-ClientLocalIP": "127.0.0.1",
-                "X-ClientPublicIP": "127.0.0.1",
-                "X-MACAddress": "00:00:00:00:00:00",
-                "X-PrivateKey": self.api_key
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-UserType': 'USER',
+                'X-SourceID': 'WEB',
+                'X-ClientLocalIP': '192.168.1.1',
+                'X-ClientPublicIP': '192.168.1.1',
+                'X-MACAddress': '00:00:00:00:00:00',
+                'X-PrivateKey': API_KEY
             }
             
             response = requests.post(
@@ -66,435 +84,710 @@ class MobileAngelClient:
             if response.status_code == 200:
                 data = response.json()
                 if data.get('status'):
-                    self.access_token = data['data']['jwtToken']
-                    logger.info("Successfully generated session")
+                    self.auth_token = data['data']['jwtToken']
+                    logger.info("✅ Successfully logged in to Angel One")
                     return True
-                else:
-                    logger.error(f"Login failed: {data.get('message', 'Unknown error')}")
-                    return False
-            else:
-                logger.error(f"HTTP Error: {response.status_code}")
-                return False
-                
+            
+            logger.error("❌ Login failed")
+            return False
         except Exception as e:
-            logger.error(f"Session generation error: {str(e)}")
+            logger.error(f"Login error: {e}")
             return False
     
-    def get_holdings(self):
-        """Get holdings data with enhanced parsing"""
-        if not self.access_token:
-            if not self.generate_session():
-                return self.get_sample_data()
-        
+    def fetch_data(self, datatype, expirytype="NEAR", limit=50):
+        """Fetch gainers/losers data"""
         try:
             headers = {
-                "Authorization": f"Bearer {self.access_token}",
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-                "X-UserType": "USER",
-                "X-SourceID": "WEB",
-                "X-ClientLocalIP": "127.0.0.1",
-                "X-ClientPublicIP": "127.0.0.1",
-                "X-MACAddress": "00:00:00:00:00:00",
-                "X-PrivateKey": self.api_key
+                'Authorization': f'Bearer {self.auth_token}',
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-UserType': 'USER',
+                'X-SourceID': 'WEB',
+                'X-ClientLocalIP': '192.168.1.1',
+                'X-ClientPublicIP': '192.168.1.1',
+                'X-MACAddress': '00:00:00:00:00:00',
+                'X-PrivateKey': API_KEY
             }
             
-            response = requests.get(
-                f"{self.base_url}/rest/secure/angelbroking/portfolio/v1/getAllHolding",
-                headers=headers
-            )
+            url = f"{self.base_url}/rest/secure/angelbroking/marketData/v1/gainersLosers"
+            payload = {"datatype": datatype, "expirytype": expirytype}
+            
+            response = requests.post(url, json=payload, headers=headers, timeout=30)
             
             if response.status_code == 200:
                 data = response.json()
-                logger.info(f"API Response: {data}")
-                
                 if data.get('status'):
-                    holdings_data = data.get('data', [])
-                    
-                    # Handle different response formats
-                    if isinstance(holdings_data, dict):
-                        holdings_data = holdings_data.get('holdings', holdings_data.get('data', []))
-                    
-                    if isinstance(holdings_data, list) and len(holdings_data) > 0:
-                        logger.info(f"Found {len(holdings_data)} holdings")
-                        return holdings_data
-                    else:
-                        logger.info("No holdings found, using sample data")
-                        return self.get_sample_data()
-                else:
-                    logger.error(f"API returned error: {data.get('message', 'Unknown error')}")
-                    return self.get_sample_data()
-            else:
-                logger.error(f"HTTP Error: {response.status_code}")
-                return self.get_sample_data()
-                
+                    return data.get('data', [])[:limit]
+            
+            return []
         except Exception as e:
-            logger.error(f"Holdings fetch error: {str(e)}")
-            return self.get_sample_data()
+            logger.error(f"Error fetching {datatype}: {e}")
+            return []
     
-    def get_sample_data(self):
-        """Generate sample data for demonstration"""
-        return [
-            {
-                'tradingsymbol': 'RELIANCE-EQ',
-                'quantity': '100',
-                'ltp': '2450.75',
-                'pnl': '1250.50',
-                'pnlpercentage': '2.15'
-            },
-            {
-                'tradingsymbol': 'TCS-EQ',
-                'quantity': '50',
-                'ltp': '3680.25',
-                'pnl': '-890.75',
-                'pnlpercentage': '-1.25'
-            },
-            {
-                'tradingsymbol': 'HDFCBANK-EQ',
-                'quantity': '75',
-                'ltp': '1542.80',
-                'pnl': '567.30',
-                'pnlpercentage': '1.85'
-            },
-            {
-                'tradingsymbol': 'ICICIBANK-EQ',
-                'quantity': '120',
-                'ltp': '1125.45',
-                'pnl': '234.60',
-                'pnlpercentage': '0.95'
-            },
-            {
-                'tradingsymbol': 'BHARTIARTL-EQ',
-                'quantity': '200',
-                'ltp': '1456.30',
-                'pnl': '-123.45',
-                'pnlpercentage': '-0.65'
+    def fetch_pcr_data(self):
+        """Fetch PCR data"""
+        try:
+            headers = {
+                'Authorization': f'Bearer {self.auth_token}',
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-UserType': 'USER',
+                'X-SourceID': 'WEB',
+                'X-PrivateKey': API_KEY
             }
-        ]
+            
+            url = f"{self.base_url}/rest/secure/angelbroking/marketData/v1/putCallRatio"
+            response = requests.get(url, headers=headers, timeout=30)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('status'):
+                    return data.get('data', [])
+            
+            return []
+        except Exception as e:
+            logger.error(f"Error fetching PCR data: {e}")
+            return []
 
-def get_nifty_stocks():
-    """Get NIFTY 50 stock list"""
-    return [
-        'RELIANCE', 'TCS', 'HDFCBANK', 'BHARTIARTL', 'ICICIBANK', 'INFY', 'SBIN', 'LT', 'ITC', 'HCLTECH',
-        'BAJFINANCE', 'KOTAKBANK', 'HINDUNILVR', 'ASIANPAINT', 'MARUTI', 'AXISBANK', 'NESTLEIND', 'DMART',
-        'BAJAJFINSV', 'TITAN', 'ULTRACEMCO', 'WIPRO', 'M&M', 'NTPC', 'JSWSTEEL', 'POWERGRID', 'TATAMOTORS',
-        'TECHM', 'SUNPHARMA', 'ONGC', 'COALINDIA', 'TATASTEEL', 'GRASIM', 'ADANIPORTS', 'CIPLA', 'BPCL',
-        'EICHERMOT', 'DIVISLAB', 'HINDALCO', 'DRREDDY', 'BRITANNIA', 'APOLLOHOSP', 'HEROMOTOCO', 'UPL',
-        'BAJAJ-AUTO', 'TATACONSUM', 'SBILIFE', 'INDUSINDBK', 'ADANIENT', 'LTIM'
-    ]
-
-def get_bank_nifty_stocks():
-    """Get Bank NIFTY stock list"""
-    return [
-        'HDFCBANK', 'ICICIBANK', 'SBIN', 'KOTAKBANK', 'AXISBANK', 'INDUSINDBK',
-        'BANDHANBNK', 'FEDERALBNK', 'IDFCFIRSTB', 'PNB', 'AUBANK', 'RBLBANK'
-    ]
-
-def calculate_sentiment_score(holdings, stock_list, index_name):
-    """Calculate sentiment score for given stock list"""
-    total_value = 0
-    bullish_value = 0
-    stock_count = 0
+def improved_symbol_matching(trading_symbol, stock_list):
+    """Improved symbol matching for futures format"""
+    if not trading_symbol:
+        return None, None
     
-    for holding in holdings:
-        symbol = holding.get('tradingsymbol', '').replace('-EQ', '')
-        
-        if symbol in stock_list:
-            try:
-                qty = float(holding.get('quantity', 0))
-                price = float(holding.get('ltp', 0))
-                value = qty * price
-                
-                total_value += value
-                
-                # Simple sentiment based on P&L
-                pnl = float(holding.get('pnl', 0))
-                if pnl > 0:
-                    bullish_value += value
-                
-                stock_count += 1
-                
-            except (ValueError, TypeError):
-                continue
+    symbol_upper = trading_symbol.upper().strip()
     
-    if total_value > 0:
-        sentiment_score = (bullish_value / total_value) * 100
-        sentiment = "Bullish" if sentiment_score > 50 else "Bearish"
-        return {
-            'score': round(sentiment_score, 1),
-            'sentiment': sentiment,
-            'total_value': round(total_value, 2),
-            'stock_count': stock_count
-        }
+    # Sort stock symbols by length (descending) to prioritize longer matches
+    sorted_symbols = sorted(stock_list.keys(), key=len, reverse=True)
+    
+    for stock_symbol in sorted_symbols:
+        if stock_symbol in symbol_upper:
+            # Special handling for short symbols
+            if len(stock_symbol) <= 3:
+                import re
+                # Create pattern: symbol followed by non-alphabetic character or futures pattern
+                pattern = f'{re.escape(stock_symbol)}(?:[^A-Z]|$|\\d{{2}}[A-Z]{{3}}\\d{{2}})'
+                if re.search(pattern, symbol_upper):
+                    return stock_symbol, stock_list[stock_symbol]
+            else:
+                return stock_symbol, stock_list[stock_symbol]
+    
+    return None, None
+
+def analyze_nifty50(client):
+    """Analyze NIFTY 50 with weighted impact"""
+    # Get OI data
+    all_gainers = client.fetch_data("PercOIGainers", "NEAR", 100)
+    time.sleep(1)
+    all_losers = client.fetch_data("PercOILosers", "NEAR", 100)
+    time.sleep(1)
+    pcr_data = client.fetch_pcr_data()
+    
+    # Filter NIFTY 50 stocks
+    nifty_gainers = []
+    nifty_losers = []
+    nifty_pcr = []
+    
+    if all_gainers:
+        for item in all_gainers:
+            symbol = item.get('tradingSymbol', '')
+            matched_symbol, weightage = improved_symbol_matching(symbol, NIFTY50_STOCKS)
+            if matched_symbol:
+                item['nifty_symbol'] = matched_symbol
+                item['weightage'] = weightage
+                nifty_gainers.append(item)
+    
+    if all_losers:
+        for item in all_losers:
+            symbol = item.get('tradingSymbol', '')
+            matched_symbol, weightage = improved_symbol_matching(symbol, NIFTY50_STOCKS)
+            if matched_symbol:
+                item['nifty_symbol'] = matched_symbol
+                item['weightage'] = weightage
+                nifty_losers.append(item)
+    
+    if pcr_data:
+        for item in pcr_data:
+            symbol = item.get('tradingSymbol', '')
+            matched_symbol, weightage = improved_symbol_matching(symbol, NIFTY50_STOCKS)
+            if matched_symbol:
+                item['nifty_symbol'] = matched_symbol
+                item['weightage'] = weightage
+                nifty_pcr.append(item)
+    
+    # Calculate weighted impact
+    gainers_impact = 0
+    losers_impact = 0
+    total_weightage = 0
+    matched_stocks = set()
+    
+    for item in nifty_gainers:
+        weightage = item.get('weightage', 0)
+        pct_change = item.get('percentChange', 0)
+        gainers_impact += (pct_change * weightage) / 100
+        matched_stocks.add(item.get('nifty_symbol'))
+        total_weightage += weightage
+    
+    for item in nifty_losers:
+        weightage = item.get('weightage', 0)
+        pct_change = item.get('percentChange', 0)
+        losers_impact += (abs(pct_change) * weightage) / 100
+        matched_stocks.add(item.get('nifty_symbol'))
+        if item.get('nifty_symbol') not in [g.get('nifty_symbol') for g in nifty_gainers]:
+            total_weightage += weightage
+    
+    net_impact = gainers_impact - losers_impact
+    
+    # Calculate PCR impact
+    weighted_pcr = 0
+    if nifty_pcr:
+        total_pcr_weight = 0
+        for item in nifty_pcr:
+            weightage = item.get('weightage', 0)
+            pcr = item.get('pcr', 0)
+            weighted_pcr += pcr * weightage
+            total_pcr_weight += weightage
+        if total_pcr_weight > 0:
+            weighted_pcr = weighted_pcr / total_pcr_weight
     
     return {
-        'score': 50.0,
-        'sentiment': 'Neutral',
-        'total_value': 0,
-        'stock_count': 0
+        'gainers': nifty_gainers,
+        'losers': nifty_losers,
+        'pcr_data': nifty_pcr,
+        'gainers_impact': gainers_impact,
+        'losers_impact': losers_impact,
+        'net_impact': net_impact,
+        'weighted_pcr': weighted_pcr,
+        'coverage': total_weightage,
+        'matched_stocks_count': len(matched_stocks),
+        'total_stocks': len(NIFTY50_STOCKS)
     }
+
+def analyze_banknifty(client):
+    """Analyze Bank NIFTY with weighted impact"""
+    # Get OI data
+    all_gainers = client.fetch_data("PercOIGainers", "NEAR", 100)
+    time.sleep(1)
+    all_losers = client.fetch_data("PercOILosers", "NEAR", 100)
+    time.sleep(1)
+    pcr_data = client.fetch_pcr_data()
+    
+    # Filter Bank NIFTY stocks
+    bank_gainers = []
+    bank_losers = []
+    bank_pcr = []
+    
+    if all_gainers:
+        for item in all_gainers:
+            symbol = item.get('tradingSymbol', '')
+            matched_symbol, weightage = improved_symbol_matching(symbol, BANKNIFTY_STOCKS)
+            if matched_symbol:
+                item['bank_symbol'] = matched_symbol
+                item['weightage'] = weightage
+                bank_gainers.append(item)
+    
+    if all_losers:
+        for item in all_losers:
+            symbol = item.get('tradingSymbol', '')
+            matched_symbol, weightage = improved_symbol_matching(symbol, BANKNIFTY_STOCKS)
+            if matched_symbol:
+                item['bank_symbol'] = matched_symbol
+                item['weightage'] = weightage
+                bank_losers.append(item)
+    
+    if pcr_data:
+        for item in pcr_data:
+            symbol = item.get('tradingSymbol', '')
+            matched_symbol, weightage = improved_symbol_matching(symbol, BANKNIFTY_STOCKS)
+            if matched_symbol:
+                item['bank_symbol'] = matched_symbol
+                item['weightage'] = weightage
+                bank_pcr.append(item)
+    
+    # Calculate weighted impact
+    gainers_impact = 0
+    losers_impact = 0
+    total_weightage = 0
+    matched_banks = set()
+    
+    for item in bank_gainers:
+        weightage = item.get('weightage', 0)
+        pct_change = item.get('percentChange', 0)
+        gainers_impact += (pct_change * weightage) / 100
+        matched_banks.add(item.get('bank_symbol'))
+        total_weightage += weightage
+    
+    for item in bank_losers:
+        weightage = item.get('weightage', 0)
+        pct_change = item.get('percentChange', 0)
+        losers_impact += (abs(pct_change) * weightage) / 100
+        matched_banks.add(item.get('bank_symbol'))
+        if item.get('bank_symbol') not in [g.get('bank_symbol') for g in bank_gainers]:
+            total_weightage += weightage
+    
+    net_impact = gainers_impact - losers_impact
+    
+    # Calculate PCR impact
+    weighted_pcr = 0
+    if bank_pcr:
+        total_pcr_weight = 0
+        for item in bank_pcr:
+            weightage = item.get('weightage', 0)
+            pcr = item.get('pcr', 0)
+            weighted_pcr += pcr * weightage
+            total_pcr_weight += weightage
+        if total_pcr_weight > 0:
+            weighted_pcr = weighted_pcr / total_pcr_weight
+    
+    return {
+        'gainers': bank_gainers,
+        'losers': bank_losers,
+        'pcr_data': bank_pcr,
+        'gainers_impact': gainers_impact,
+        'losers_impact': losers_impact,
+        'net_impact': net_impact,
+        'weighted_pcr': weighted_pcr,
+        'coverage': total_weightage,
+        'matched_banks_count': len(matched_banks),
+        'total_banks': len(BANKNIFTY_STOCKS)
+    }
+
+def determine_verdict(net_impact, weighted_pcr):
+    """Determine market verdict based on impact and PCR"""
+    # OI Sentiment
+    if net_impact > 0.5:
+        oi_sentiment = "Bullish"
+    elif net_impact < -0.5:
+        oi_sentiment = "Bearish"
+    else:
+        oi_sentiment = "Neutral"
+    
+    # PCR Sentiment
+    if weighted_pcr > 1.2:
+        pcr_sentiment = "Bearish"
+    elif weighted_pcr > 1.0:
+        pcr_sentiment = "Cautious"
+    elif weighted_pcr > 0.8:
+        pcr_sentiment = "Bullish"
+    else:
+        pcr_sentiment = "Very Bullish"
+    
+    # Final Verdict
+    if oi_sentiment == "Bullish" and "Bullish" in pcr_sentiment:
+        final_verdict = "Strong Bullish"
+        verdict_color = "success"
+        verdict_emoji = "🚀🚀🚀"
+    elif oi_sentiment == "Bearish" and pcr_sentiment == "Bearish":
+        final_verdict = "Strong Bearish"
+        verdict_color = "danger"
+        verdict_emoji = "💥💥💥"
+    elif "Bullish" in pcr_sentiment:
+        final_verdict = "Very Bullish"
+        verdict_color = "success"
+        verdict_emoji = "🚀🚀"
+    elif oi_sentiment == "Bullish" or "Bullish" in pcr_sentiment:
+        final_verdict = "Bullish"
+        verdict_color = "success"
+        verdict_emoji = "📈📈"
+    elif oi_sentiment == "Bearish" or pcr_sentiment == "Bearish":
+        final_verdict = "Bearish"
+        verdict_color = "danger"
+        verdict_emoji = "📉📉"
+    else:
+        final_verdict = "Neutral"
+        verdict_color = "warning"
+        verdict_emoji = "⚖️"
+    
+    return final_verdict, verdict_color, verdict_emoji, oi_sentiment, pcr_sentiment
 
 @app.route('/')
 def mobile_dashboard():
-    """Enhanced mobile dashboard with data and refresh"""
+    """Mobile market analysis dashboard"""
     
     try:
         # Initialize Angel One client
-        client = MobileAngelClient(
-            api_key=os.getenv('ANGEL_API_KEY'),
-            username=os.getenv('ANGEL_USERNAME'), 
-            password=os.getenv('ANGEL_PASSWORD'),
-            totp_token=os.getenv('ANGEL_TOTP_TOKEN')
+        client = MobileAngelClient()
+        
+        # Analyze both indices
+        nifty_analysis = analyze_nifty50(client)
+        banknifty_analysis = analyze_banknifty(client)
+        
+        # Determine verdicts
+        nifty_verdict, nifty_color, nifty_emoji, nifty_oi, nifty_pcr_sentiment = determine_verdict(
+            nifty_analysis['net_impact'], nifty_analysis['weighted_pcr']
         )
         
-        # Get holdings data
-        holdings = client.get_holdings()
-        logger.info(f"Dashboard received {len(holdings)} holdings")
+        bank_verdict, bank_color, bank_emoji, bank_oi, bank_pcr_sentiment = determine_verdict(
+            banknifty_analysis['net_impact'], banknifty_analysis['weighted_pcr']
+        )
         
-        # Get stock lists
-        nifty_stocks = get_nifty_stocks()
-        banknifty_stocks = get_bank_nifty_stocks()
-        
-        # Calculate sentiment scores
-        nifty_sentiment = calculate_sentiment_score(holdings, nifty_stocks, "NIFTY 50")
-        banknifty_sentiment = calculate_sentiment_score(holdings, banknifty_stocks, "Bank NIFTY")
-        
-        # Filter holdings for display
-        nifty_holdings = []
-        banknifty_holdings = []
-        
-        for holding in holdings:
-            symbol = holding.get('tradingsymbol', '').replace('-EQ', '')
-            
-            if symbol in nifty_stocks:
-                holding_data = {
-                    'symbol': symbol,
-                    'quantity': holding.get('quantity', 0),
-                    'ltp': float(holding.get('ltp', 0)),
-                    'pnl': float(holding.get('pnl', 0)),
-                    'pnlpercentage': float(holding.get('pnlpercentage', 0))
-                }
-                nifty_holdings.append(holding_data)
-            
-            if symbol in banknifty_stocks:
-                holding_data = {
-                    'symbol': symbol,
-                    'quantity': holding.get('quantity', 0),
-                    'ltp': float(holding.get('ltp', 0)),
-                    'pnl': float(holding.get('pnl', 0)),
-                    'pnlpercentage': float(holding.get('pnlpercentage', 0))
-                }
-                banknifty_holdings.append(holding_data)
-        
-        # Mock index data (replace with real API calls)
+        # Calculate NIFTY spot and Bank NIFTY spot (mock values)
         nifty_spot = 25145.75
         banknifty_spot = 52380.25
         
     except Exception as e:
         logger.error(f"Dashboard error: {str(e)}")
         # Fallback data
-        nifty_holdings = []
-        banknifty_holdings = []
-        nifty_sentiment = {'score': 50.0, 'sentiment': 'Neutral', 'total_value': 0, 'stock_count': 0}
-        banknifty_sentiment = {'score': 50.0, 'sentiment': 'Neutral', 'total_value': 0, 'stock_count': 0}
+        nifty_analysis = {'gainers': [], 'losers': [], 'net_impact': 0, 'weighted_pcr': 1, 'coverage': 0, 'matched_stocks_count': 0, 'total_stocks': 50}
+        banknifty_analysis = {'gainers': [], 'losers': [], 'net_impact': 0, 'weighted_pcr': 1, 'coverage': 0, 'matched_banks_count': 0, 'total_banks': 12}
+        nifty_verdict, nifty_color, nifty_emoji = "Neutral", "warning", "⚖️"
+        bank_verdict, bank_color, bank_emoji = "Neutral", "warning", "⚖️"
+        nifty_oi = bank_oi = "Neutral"
+        nifty_pcr_sentiment = bank_pcr_sentiment = "Unknown"
         nifty_spot = 25145.75
         banknifty_spot = 52380.25
-    
-    # Enhanced mobile template with refresh button
+
+    # Mobile HTML template
     template = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>📱 Mobile Market Analysis</title>
+    <title>📊 Angel One Market Analysis</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
         body { 
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+            background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); 
             min-height: 100vh; 
             font-family: 'Segoe UI', sans-serif;
+            color: #333;
         }
-        .card { 
-            backdrop-filter: blur(10px); 
+        .main-card { 
+            backdrop-filter: blur(15px); 
             background: rgba(255, 255, 255, 0.95); 
             border: none; 
-            box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+            box-shadow: 0 15px 35px rgba(0,0,0,0.1);
+            border-radius: 20px;
+            margin-bottom: 20px;
         }
-        .sentiment-card {
-            background: linear-gradient(45deg, #ff6b6b, #feca57);
+        .index-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
+            border-radius: 15px;
             text-align: center;
+            padding: 20px;
+            margin-bottom: 20px;
         }
-        .bullish { background: linear-gradient(45deg, #2ecc71, #27ae60) !important; }
-        .bearish { background: linear-gradient(45deg, #e74c3c, #c0392b) !important; }
-        .neutral { background: linear-gradient(45deg, #f39c12, #e67e22) !important; }
-        .stock-item {
-            border-left: 4px solid #3498db;
-            margin-bottom: 8px;
-            padding: 8px;
-            background: rgba(255,255,255,0.8);
-            border-radius: 5px;
+        .verdict-card {
+            border-radius: 15px;
+            text-align: center;
+            padding: 20px;
+            margin-bottom: 20px;
         }
-        .positive { border-left-color: #2ecc71; }
-        .negative { border-left-color: #e74c3c; }
+        .impact-meter {
+            height: 8px;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
         .header-title {
             color: white;
             text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
-            margin-bottom: 0;
+            text-align: center;
+            margin-bottom: 30px;
         }
-        .index-value {
-            font-size: 2rem;
-            font-weight: bold;
-            margin: 0;
+        .metric-box {
+            background: rgba(255,255,255,0.1);
+            border-radius: 10px;
+            padding: 15px;
+            margin: 10px 0;
+            text-align: center;
         }
-        .sentiment-score {
-            font-size: 1.5rem;
-            font-weight: bold;
+        .stock-item {
+            border-left: 4px solid #007bff;
+            margin-bottom: 8px;
+            padding: 12px;
+            background: rgba(255,255,255,0.9);
+            border-radius: 8px;
+            font-size: 0.9em;
         }
+        .positive { border-left-color: #28a745; }
+        .negative { border-left-color: #dc3545; }
         .refresh-btn {
-            background: linear-gradient(45deg, #3498db, #2980b9);
+            background: linear-gradient(45deg, #28a745, #20c997);
             color: white;
             border: none;
-            padding: 10px 20px;
+            padding: 12px 24px;
             border-radius: 25px;
             font-weight: bold;
-            box-shadow: 0 4px 15px rgba(52, 152, 219, 0.3);
+            box-shadow: 0 4px 15px rgba(40, 167, 69, 0.3);
+            width: 100%;
+            margin-bottom: 20px;
         }
         .refresh-btn:hover {
             transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(52, 152, 219, 0.4);
+            box-shadow: 0 6px 20px rgba(40, 167, 69, 0.4);
         }
-        .auto-refresh {
-            color: rgba(255,255,255,0.8);
-            font-size: 0.9em;
+        .holdings-container {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .analysis-tabs {
+            background: rgba(255,255,255,0.1);
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .tab-button {
+            background: rgba(255,255,255,0.2);
+            border: none;
+            padding: 10px 20px;
+            border-radius: 20px;
+            color: white;
+            margin: 5px;
+            transition: all 0.3s;
+        }
+        .tab-button.active {
+            background: rgba(255,255,255,0.8);
+            color: #333;
         }
         @media (max-width: 768px) {
             .container-fluid { padding: 10px; }
-            .card { margin-bottom: 15px; }
-            .index-value { font-size: 1.5rem; }
+            .main-card { margin-bottom: 15px; padding: 15px; }
+            .stock-item { padding: 8px; font-size: 0.85em; }
         }
     </style>
 </head>
 <body>
     <div class="container-fluid">
-        <div class="text-center py-3">
-            <h1 class="header-title">📱 Mobile Market Analysis</h1>
-            <p class="text-white">Real-time NIFTY & Bank NIFTY Dashboard</p>
-            <button class="refresh-btn" onclick="refreshData()">🔄 Refresh Now</button>
-            <br><small class="auto-refresh">Auto-refresh every 30 seconds</small>
+        <!-- Header -->
+        <div class="py-4">
+            <h1 class="header-title">
+                <i class="fas fa-chart-line"></i> Angel One Market Analysis
+            </h1>
+            <p class="text-center text-white">Real-time NIFTY 50 & Bank NIFTY Weighted Analysis</p>
+            <button class="refresh-btn" onclick="refreshData()">
+                <i class="fas fa-sync-alt"></i> Refresh Data
+            </button>
         </div>
         
-        <!-- Index Levels Row -->
-        <div class="row mb-3">
+        <!-- Index Levels -->
+        <div class="row mb-4">
             <div class="col-6">
-                <div class="card">
-                    <div class="card-body text-center">
-                        <h6 class="card-title text-primary">NIFTY 50</h6>
-                        <p class="index-value text-success">{{ "%.2f"|format(nifty_spot) }}</p>
-                        <small class="text-muted">Live</small>
-                    </div>
+                <div class="index-card">
+                    <h5><i class="fas fa-chart-area"></i> NIFTY 50</h5>
+                    <h2>{{ "%.2f"|format(nifty_spot) }}</h2>
+                    <small>Live Index</small>
                 </div>
             </div>
             <div class="col-6">
-                <div class="card">
-                    <div class="card-body text-center">
-                        <h6 class="card-title text-primary">Bank NIFTY</h6>
-                        <p class="index-value text-success">{{ "%.2f"|format(banknifty_spot) }}</p>
-                        <small class="text-muted">Live</small>
-                    </div>
-                </div>
-            </div>
-        </div>
-        
-        <!-- Sentiment Scores Row -->
-        <div class="row mb-3">
-            <div class="col-6">
-                <div class="card sentiment-card {{ nifty_sentiment.sentiment.lower() }}">
-                    <div class="card-body text-center">
-                        <h6>NIFTY Sentiment</h6>
-                        <p class="sentiment-score">{{ nifty_sentiment.score }}%</p>
-                        <small>{{ nifty_sentiment.sentiment }}</small>
-                    </div>
-                </div>
-            </div>
-            <div class="col-6">
-                <div class="card sentiment-card {{ banknifty_sentiment.sentiment.lower() }}">
-                    <div class="card-body text-center">
-                        <h6>Bank NIFTY Sentiment</h6>
-                        <p class="sentiment-score">{{ banknifty_sentiment.score }}%</p>
-                        <small>{{ banknifty_sentiment.sentiment }}</small>
-                    </div>
+                <div class="index-card">
+                    <h5><i class="fas fa-university"></i> Bank NIFTY</h5>
+                    <h2>{{ "%.2f"|format(banknifty_spot) }}</h2>
+                    <small>Live Index</small>
                 </div>
             </div>
         </div>
         
-        <!-- NIFTY Holdings -->
-        <div class="card mb-3">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="mb-0">📊 NIFTY 50 Holdings</h5>
-                <span class="badge bg-primary">{{ nifty_holdings|length }}</span>
+        <!-- Market Verdicts -->
+        <div class="row mb-4">
+            <div class="col-6">
+                <div class="verdict-card bg-{{ nifty_color }} text-white">
+                    <h6>NIFTY 50 Verdict</h6>
+                    <h4>{{ nifty_emoji }}</h4>
+                    <strong>{{ nifty_verdict }}</strong>
+                    <div class="mt-2">
+                        <small>OI: {{ nifty_oi }} | PCR: {{ nifty_pcr_sentiment }}</small>
+                    </div>
+                </div>
             </div>
-            <div class="card-body" style="max-height: 300px; overflow-y: auto;">
-                {% if nifty_holdings %}
-                    {% for stock in nifty_holdings %}
-                    <div class="stock-item {{ 'positive' if stock.pnl > 0 else 'negative' if stock.pnl < 0 else '' }}">
-                        <div class="d-flex justify-content-between">
-                            <strong>{{ stock.symbol }}</strong>
-                            <span class="badge bg-{{ 'success' if stock.pnl > 0 else 'danger' if stock.pnl < 0 else 'secondary' }}">
-                                {{ "%.1f"|format(stock.pnlpercentage) }}%
-                            </span>
+            <div class="col-6">
+                <div class="verdict-card bg-{{ bank_color }} text-white">
+                    <h6>Bank NIFTY Verdict</h6>
+                    <h4>{{ bank_emoji }}</h4>
+                    <strong>{{ bank_verdict }}</strong>
+                    <div class="mt-2">
+                        <small>OI: {{ bank_oi }} | PCR: {{ bank_pcr_sentiment }}</small>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- NIFTY 50 Analysis -->
+        <div class="main-card">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0">
+                    <i class="fas fa-chart-line"></i> NIFTY 50 Weighted Analysis
+                    <span class="badge bg-light text-dark ms-2">{{ nifty_analysis.matched_stocks_count }}/{{ nifty_analysis.total_stocks }}</span>
+                </h5>
+            </div>
+            <div class="card-body">
+                <!-- Impact Metrics -->
+                <div class="row mb-3">
+                    <div class="col-4 text-center">
+                        <h6>Net Impact</h6>
+                        <h5 class="text-{{ 'success' if nifty_analysis.net_impact > 0 else 'danger' }}">
+                            {{ "%.3f"|format(nifty_analysis.net_impact) }}%
+                        </h5>
+                    </div>
+                    <div class="col-4 text-center">
+                        <h6>Weighted PCR</h6>
+                        <h5 class="text-{{ 'danger' if nifty_analysis.weighted_pcr > 1.2 else 'warning' if nifty_analysis.weighted_pcr > 1.0 else 'success' }}">
+                            {{ "%.4f"|format(nifty_analysis.weighted_pcr) }}
+                        </h5>
+                    </div>
+                    <div class="col-4 text-center">
+                        <h6>Coverage</h6>
+                        <h5 class="text-info">{{ "%.1f"|format(nifty_analysis.coverage) }}%</h5>
+                    </div>
+                </div>
+                
+                <!-- Impact Meter -->
+                <div class="impact-meter bg-secondary">
+                    <div class="bg-{{ 'success' if nifty_analysis.net_impact > 0 else 'danger' }}" 
+                         style="width: {{ min(abs(nifty_analysis.net_impact) * 20, 100) }}%; height: 100%;"></div>
+                </div>
+                
+                <!-- Gainers and Losers Tabs -->
+                <div class="mt-3">
+                    <ul class="nav nav-pills justify-content-center mb-3" id="niftyTabs">
+                        <li class="nav-item">
+                            <button class="nav-link active" onclick="showTab('nifty-gainers')">
+                                Gainers ({{ nifty_analysis.gainers|length }})
+                            </button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link" onclick="showTab('nifty-losers')">
+                                Losers ({{ nifty_analysis.losers|length }})
+                            </button>
+                        </li>
+                    </ul>
+                    
+                    <!-- NIFTY Gainers -->
+                    <div id="nifty-gainers" class="tab-content holdings-container">
+                        {% for stock in nifty_analysis.gainers[:15] %}
+                        <div class="stock-item positive">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>{{ stock.get('nifty_symbol', stock.get('tradingSymbol', 'N/A')[:15]) }}</strong>
+                                    <small class="text-muted d-block">Weight: {{ "%.2f"|format(stock.get('weightage', 0)) }}%</small>
+                                </div>
+                                <div class="text-end">
+                                    <span class="badge bg-success">{{ "%.2f"|format(stock.get('percentChange', 0)) }}%</span>
+                                    <small class="text-muted d-block">OI: {{ "%.0f"|format(stock.get('netChangeOpnInterest', 0)) }}</small>
+                                </div>
+                            </div>
                         </div>
-                        <small class="text-muted">
-                            Qty: {{ stock.quantity }} | LTP: ₹{{ "%.2f"|format(stock.ltp) }} | 
-                            P&L: ₹{{ "%.2f"|format(stock.pnl) }}
-                        </small>
+                        {% endfor %}
                     </div>
-                    {% endfor %}
-                {% else %}
-                    <div class="text-center">
-                        <p class="text-muted">No NIFTY holdings found</p>
-                        <small class="text-info">Sample data will load automatically</small>
+                    
+                    <!-- NIFTY Losers -->
+                    <div id="nifty-losers" class="tab-content holdings-container" style="display: none;">
+                        {% for stock in nifty_analysis.losers[:15] %}
+                        <div class="stock-item negative">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>{{ stock.get('nifty_symbol', stock.get('tradingSymbol', 'N/A')[:15]) }}</strong>
+                                    <small class="text-muted d-block">Weight: {{ "%.2f"|format(stock.get('weightage', 0)) }}%</small>
+                                </div>
+                                <div class="text-end">
+                                    <span class="badge bg-danger">{{ "%.2f"|format(stock.get('percentChange', 0)) }}%</span>
+                                    <small class="text-muted d-block">OI: {{ "%.0f"|format(stock.get('netChangeOpnInterest', 0)) }}</small>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
                     </div>
-                {% endif %}
+                </div>
             </div>
         </div>
         
-        <!-- Bank NIFTY Holdings -->
-        <div class="card mb-3">
-            <div class="card-header d-flex justify-content-between align-items-center">
-                <h5 class="mb-0">🏦 Bank NIFTY Holdings</h5>
-                <span class="badge bg-primary">{{ banknifty_holdings|length }}</span>
+        <!-- Bank NIFTY Analysis -->
+        <div class="main-card">
+            <div class="card-header bg-warning text-dark">
+                <h5 class="mb-0">
+                    <i class="fas fa-university"></i> Bank NIFTY Weighted Analysis
+                    <span class="badge bg-dark text-light ms-2">{{ banknifty_analysis.matched_banks_count }}/{{ banknifty_analysis.total_banks }}</span>
+                </h5>
             </div>
-            <div class="card-body" style="max-height: 300px; overflow-y: auto;">
-                {% if banknifty_holdings %}
-                    {% for stock in banknifty_holdings %}
-                    <div class="stock-item {{ 'positive' if stock.pnl > 0 else 'negative' if stock.pnl < 0 else '' }}">
-                        <div class="d-flex justify-content-between">
-                            <strong>{{ stock.symbol }}</strong>
-                            <span class="badge bg-{{ 'success' if stock.pnl > 0 else 'danger' if stock.pnl < 0 else 'secondary' }}">
-                                {{ "%.1f"|format(stock.pnlpercentage) }}%
-                            </span>
+            <div class="card-body">
+                <!-- Impact Metrics -->
+                <div class="row mb-3">
+                    <div class="col-4 text-center">
+                        <h6>Net Impact</h6>
+                        <h5 class="text-{{ 'success' if banknifty_analysis.net_impact > 0 else 'danger' }}">
+                            {{ "%.3f"|format(banknifty_analysis.net_impact) }}%
+                        </h5>
+                    </div>
+                    <div class="col-4 text-center">
+                        <h6>Weighted PCR</h6>
+                        <h5 class="text-{{ 'danger' if banknifty_analysis.weighted_pcr > 1.2 else 'warning' if banknifty_analysis.weighted_pcr > 1.0 else 'success' }}">
+                            {{ "%.4f"|format(banknifty_analysis.weighted_pcr) }}
+                        </h5>
+                    </div>
+                    <div class="col-4 text-center">
+                        <h6>Coverage</h6>
+                        <h5 class="text-info">{{ "%.1f"|format(banknifty_analysis.coverage) }}%</h5>
+                    </div>
+                </div>
+                
+                <!-- Impact Meter -->
+                <div class="impact-meter bg-secondary">
+                    <div class="bg-{{ 'success' if banknifty_analysis.net_impact > 0 else 'danger' }}" 
+                         style="width: {{ min(abs(banknifty_analysis.net_impact) * 10, 100) }}%; height: 100%;"></div>
+                </div>
+                
+                <!-- Gainers and Losers Tabs -->
+                <div class="mt-3">
+                    <ul class="nav nav-pills justify-content-center mb-3" id="bankTabs">
+                        <li class="nav-item">
+                            <button class="nav-link active" onclick="showTab('bank-gainers')">
+                                Gainers ({{ banknifty_analysis.gainers|length }})
+                            </button>
+                        </li>
+                        <li class="nav-item">
+                            <button class="nav-link" onclick="showTab('bank-losers')">
+                                Losers ({{ banknifty_analysis.losers|length }})
+                            </button>
+                        </li>
+                    </ul>
+                    
+                    <!-- Bank Gainers -->
+                    <div id="bank-gainers" class="tab-content holdings-container">
+                        {% for bank in banknifty_analysis.gainers[:10] %}
+                        <div class="stock-item positive">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>{{ bank.get('bank_symbol', bank.get('tradingSymbol', 'N/A')[:15]) }}</strong>
+                                    <small class="text-muted d-block">Weight: {{ "%.2f"|format(bank.get('weightage', 0)) }}%</small>
+                                </div>
+                                <div class="text-end">
+                                    <span class="badge bg-success">{{ "%.2f"|format(bank.get('percentChange', 0)) }}%</span>
+                                    <small class="text-muted d-block">OI: {{ "%.0f"|format(bank.get('netChangeOpnInterest', 0)) }}</small>
+                                </div>
+                            </div>
                         </div>
-                        <small class="text-muted">
-                            Qty: {{ stock.quantity }} | LTP: ₹{{ "%.2f"|format(stock.ltp) }} | 
-                            P&L: ₹{{ "%.2f"|format(stock.pnl) }}
-                        </small>
+                        {% endfor %}
                     </div>
-                    {% endfor %}
-                {% else %}
-                    <div class="text-center">
-                        <p class="text-muted">No Bank NIFTY holdings found</p>
-                        <small class="text-info">Sample data will load automatically</small>
+                    
+                    <!-- Bank Losers -->
+                    <div id="bank-losers" class="tab-content holdings-container" style="display: none;">
+                        {% for bank in banknifty_analysis.losers[:10] %}
+                        <div class="stock-item negative">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <strong>{{ bank.get('bank_symbol', bank.get('tradingSymbol', 'N/A')[:15]) }}</strong>
+                                    <small class="text-muted d-block">Weight: {{ "%.2f"|format(bank.get('weightage', 0)) }}%</small>
+                                </div>
+                                <div class="text-end">
+                                    <span class="badge bg-danger">{{ "%.2f"|format(bank.get('percentChange', 0)) }}%</span>
+                                    <small class="text-muted d-block">OI: {{ "%.0f"|format(bank.get('netChangeOpnInterest', 0)) }}</small>
+                                </div>
+                            </div>
+                        </div>
+                        {% endfor %}
                     </div>
-                {% endif %}
+                </div>
             </div>
         </div>
         
         <!-- Footer -->
-        <div class="text-center py-3">
+        <div class="text-center py-4">
             <small class="text-white">
-                📱 Mobile Market Analysis | Last Updated: {{ current_time }}
+                <i class="fas fa-mobile-alt"></i> Angel One Mobile Analysis | 
+                Updated: {{ current_time }} | 
+                <i class="fas fa-chart-line"></i> Real-time Data
             </small>
         </div>
     </div>
@@ -503,17 +796,46 @@ def mobile_dashboard():
     <script>
         // Manual refresh function
         function refreshData() {
+            document.body.style.opacity = '0.8';
             location.reload();
         }
         
-        // Auto refresh every 30 seconds
+        // Tab switching function
+        function showTab(tabId) {
+            // Hide all tab contents
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.style.display = 'none';
+            });
+            
+            // Remove active class from all nav links
+            document.querySelectorAll('.nav-link').forEach(link => {
+                link.classList.remove('active');
+            });
+            
+            // Show selected tab
+            document.getElementById(tabId).style.display = 'block';
+            
+            // Add active class to clicked nav link
+            event.target.classList.add('active');
+        }
+        
+        // Auto refresh every 60 seconds
         setTimeout(function() {
             location.reload();
-        }, 30000);
+        }, 60000);
         
         // Add loading indicator during refresh
         window.addEventListener('beforeunload', function() {
             document.body.style.opacity = '0.7';
+        });
+        
+        // Initialize first tab as active on load
+        document.addEventListener('DOMContentLoaded', function() {
+            // Make sure first tabs are visible
+            const firstNiftyTab = document.getElementById('nifty-gainers');
+            const firstBankTab = document.getElementById('bank-gainers');
+            if (firstNiftyTab) firstNiftyTab.style.display = 'block';
+            if (firstBankTab) firstBankTab.style.display = 'block';
         });
     </script>
 </body>
@@ -522,10 +844,18 @@ def mobile_dashboard():
     
     return render_template_string(
         template,
-        nifty_holdings=nifty_holdings,
-        banknifty_holdings=banknifty_holdings,
-        nifty_sentiment=nifty_sentiment,
-        banknifty_sentiment=banknifty_sentiment,
+        nifty_analysis=nifty_analysis,
+        banknifty_analysis=banknifty_analysis,
+        nifty_verdict=nifty_verdict,
+        nifty_color=nifty_color,
+        nifty_emoji=nifty_emoji,
+        nifty_oi=nifty_oi,
+        nifty_pcr_sentiment=nifty_pcr_sentiment,
+        bank_verdict=bank_verdict,
+        bank_color=bank_color,
+        bank_emoji=bank_emoji,
+        bank_oi=bank_oi,
+        bank_pcr_sentiment=bank_pcr_sentiment,
         nifty_spot=nifty_spot,
         banknifty_spot=banknifty_spot,
         current_time=datetime.now().strftime("%H:%M:%S")
@@ -533,3 +863,4 @@ def mobile_dashboard():
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+
