@@ -25,7 +25,7 @@ TOTP_TOKEN = os.getenv('ANGEL_TOTP_TOKEN', 'TZZ2VTRBUWPB33SLOSA3NXSGWA')
 
 # Sample data for fallback
 SAMPLE_NIFTY_DATA = [
-    {'symbol': 'RELIANCE', 'change': 2.45, 'oi_change': 15000, 'weight': 9.37, 'current_price': 2875.50, 'pcr_ratio': 0.85},
+    {'symbol': 'RELIANCE', 'change': 2.45, 'oi_change': 15000, 'weight': 9.37, 'current_price': 1371.30, 'pcr_ratio': 0.85},
     {'symbol': 'HDFCBANK', 'change': 1.82, 'oi_change': 12000, 'weight': 7.50, 'current_price': 1654.25, 'pcr_ratio': 0.92},
     {'symbol': 'BHARTIARTL', 'change': -0.95, 'oi_change': -8000, 'weight': 5.76, 'current_price': 1568.75, 'pcr_ratio': 1.15},
     {'symbol': 'TCS', 'change': 1.25, 'oi_change': 6000, 'weight': 5.33, 'current_price': 4125.80, 'pcr_ratio': 0.78},
@@ -110,31 +110,64 @@ class SimpleAngelClient:
                 'X-PrivateKey': API_KEY
             }
             
-            # Prepare exchange and symboltoken mapping
             ltp_data = {}
+            
+            # Try to get quotes for multiple symbols at once
             for symbol in symbols:
-                # Get LTP for equity symbols
-                symbol_token = self.get_symbol_token(symbol)
-                if symbol_token:
-                    ltp_request = {
+                try:
+                    # Use search API to get correct symbol token first
+                    search_data = {
                         "exchange": "NSE",
-                        "tradingsymbol": symbol,
-                        "symboltoken": symbol_token
+                        "searchscrip": symbol
                     }
                     
-                    response = requests.post(
-                        "https://apiconnect.angelone.in/rest/secure/angelbroking/order/v1/getLTP",
-                        json=ltp_request,
+                    search_response = requests.post(
+                        "https://apiconnect.angelone.in/rest/secure/angelbroking/order/v1/searchscrip",
+                        json=search_data,
                         headers=headers,
                         timeout=5
                     )
                     
-                    if response.status_code == 200:
-                        data = response.json()
-                        if data.get('status') and data.get('data'):
-                            ltp_data[symbol] = float(data['data']['ltp'])
+                    if search_response.status_code == 200:
+                        search_result = search_response.json()
+                        if search_result.get('status') and search_result.get('data'):
+                            # Find exact match for the symbol
+                            for item in search_result['data']:
+                                if item.get('tradingsymbol') == symbol and item.get('exchange') == 'NSE':
+                                    symbol_token = item.get('symboltoken')
+                                    
+                                    if symbol_token:
+                                        # Now get LTP with correct token
+                                        ltp_request = {
+                                            "exchange": "NSE",
+                                            "tradingsymbol": symbol,
+                                            "symboltoken": symbol_token
+                                        }
+                                        
+                                        ltp_response = requests.post(
+                                            "https://apiconnect.angelone.in/rest/secure/angelbroking/order/v1/getLTP",
+                                            json=ltp_request,
+                                            headers=headers,
+                                            timeout=5
+                                        )
+                                        
+                                        if ltp_response.status_code == 200:
+                                            ltp_result = ltp_response.json()
+                                            if ltp_result.get('status') and ltp_result.get('data'):
+                                                ltp_data[symbol] = float(ltp_result['data']['ltp'])
+                                                logger.info(f"✅ Got LTP for {symbol}: ₹{ltp_data[symbol]}")
+                                            break
+                    
+                    # If we couldn't get LTP, log it
+                    if symbol not in ltp_data:
+                        logger.warning(f"⚠️ Could not fetch LTP for {symbol}")
+                        
+                except Exception as e:
+                    logger.warning(f"⚠️ Error getting LTP for {symbol}: {e}")
+                    continue
             
             return ltp_data
+            
         except Exception as e:
             logger.warning(f"⚠️ LTP data fetch failed: {e}")
             return {}
@@ -246,7 +279,13 @@ class SimpleAngelClient:
             # Check if it's a NIFTY stock
             for nifty_symbol in nifty_symbols:
                 if nifty_symbol in symbol:
-                    price = ltp_data.get(nifty_symbol, self.get_sample_price(nifty_symbol))
+                    price = ltp_data.get(nifty_symbol)
+                    if price is None:
+                        price = self.get_sample_price(nifty_symbol)
+                        logger.info(f"📊 Using sample price for {nifty_symbol}: ₹{price}")
+                    else:
+                        logger.info(f"💰 Using live price for {nifty_symbol}: ₹{price}")
+                    
                     pcr = self.calculate_pcr_ratio(nifty_symbol)
                     
                     nifty_data.append({
@@ -262,7 +301,13 @@ class SimpleAngelClient:
             # Check if it's a Bank NIFTY stock
             for bank_symbol in bank_symbols:
                 if bank_symbol in symbol:
-                    price = ltp_data.get(bank_symbol, self.get_sample_price(bank_symbol))
+                    price = ltp_data.get(bank_symbol)
+                    if price is None:
+                        price = self.get_sample_price(bank_symbol)
+                        logger.info(f"📊 Using sample price for {bank_symbol}: ₹{price}")
+                    else:
+                        logger.info(f"💰 Using live price for {bank_symbol}: ₹{price}")
+                    
                     pcr = self.calculate_pcr_ratio(bank_symbol)
                     
                     bank_data.append({
@@ -298,11 +343,20 @@ class SimpleAngelClient:
         }
     
     def get_sample_price(self, symbol):
-        """Get sample price for a symbol"""
+        """Get sample price for a symbol - updated with current market levels"""
         sample_prices = {
-            'RELIANCE': 2875.50, 'HDFCBANK': 1654.25, 'TCS': 4125.80, 'BHARTIARTL': 1568.75,
-            'ICICIBANK': 1256.90, 'SBIN': 845.30, 'BAJFINANCE': 6987.40, 'INFY': 1875.25,
-            'HINDUNILVR': 2456.80, 'ITC': 478.65, 'KOTAKBANK': 1725.60, 'AXISBANK': 1156.45,
+            'RELIANCE': 1371.30,    # Updated to current price you mentioned
+            'HDFCBANK': 1654.25, 
+            'TCS': 4125.80, 
+            'BHARTIARTL': 1568.75,
+            'ICICIBANK': 1256.90, 
+            'SBIN': 845.30, 
+            'BAJFINANCE': 6987.40, 
+            'INFY': 1875.25,
+            'HINDUNILVR': 2456.80, 
+            'ITC': 478.65, 
+            'KOTAKBANK': 1725.60, 
+            'AXISBANK': 1156.45,
             'BANKBARODA': 234.80
         }
         return sample_prices.get(symbol, 1000.0)
