@@ -221,7 +221,7 @@ class SimpleAngelClient:
             return self.get_sample_data()
     
     def fetch_real_data(self):
-        """Fetch real data from Angel One API"""
+        """Fetch real data from Angel One API using gainersLosers endpoint"""
         headers = {
             'Authorization': f'Bearer {self.auth_token}',
             'Content-Type': 'application/json',
@@ -231,108 +231,131 @@ class SimpleAngelClient:
             'X-PrivateKey': API_KEY
         }
         
-        # Get OI gainers
-        response = requests.post(
-            "https://apiconnect.angelone.in/rest/secure/angelbroking/marketData/v1/gainersLosers",
-            json={"datatype": "PercOIGainers", "expirytype": "NEAR"},
-            headers=headers,
-            timeout=10
-        )
+        logger.info("🔍 Fetching live market data from Angel One API...")
         
-        if response.status_code == 200:
-            data = response.json()
-            if data.get('status'):
-                real_data = data.get('data', [])[:10]
-                logger.info(f"✅ Fetched {len(real_data)} real market records")
-                return self.process_real_data(real_data)
+        # Get comprehensive market data from multiple endpoints
+        all_market_data = []
         
-        return self.get_sample_data()
+        # Fetch different types of market data
+        data_types = [
+            "PercOIGainers",    # OI Gainers
+            "PercPriceGainers", # Price Gainers
+            "PercOILosers",     # OI Losers
+        ]
+        
+        for data_type in data_types:
+            try:
+                response = requests.post(
+                    "https://apiconnect.angelone.in/rest/secure/angelbroking/marketData/v1/gainersLosers",
+                    json={"datatype": data_type, "expirytype": "NEAR"},
+                    headers=headers,
+                    timeout=10
+                )
+                
+                logger.info(f"📡 {data_type} API response: Status {response.status_code}")
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get('status') and data.get('data'):
+                        market_data = data.get('data', [])
+                        all_market_data.extend(market_data)
+                        logger.info(f"✅ Fetched {len(market_data)} records from {data_type}")
+                    else:
+                        logger.warning(f"⚠️ {data_type} API returned no data: {data}")
+                else:
+                    logger.warning(f"⚠️ {data_type} API failed: {response.status_code} - {response.text}")
+                    
+            except Exception as e:
+                logger.error(f"❌ Error fetching {data_type}: {str(e)}")
+                continue
+        
+        if all_market_data:
+            logger.info(f"✅ Total market records fetched: {len(all_market_data)}")
+            return self.process_real_data(all_market_data)
+        else:
+            logger.warning("⚠️ No real market data fetched, using sample data")
+            return self.get_sample_data()
     
-    def process_real_data(self, raw_data):
-        """Process real API data"""
+    def process_real_data(self, raw_market_data):
+        """Process real API data from gainersLosers endpoint"""
         nifty_data = []
         bank_data = []
         
         # Define key stocks to look for
-        nifty_symbols = ['RELIANCE', 'HDFCBANK', 'TCS', 'BHARTIARTL', 'ICICIBANK', 'SBIN', 'BAJFINANCE', 'INFY']
-        bank_symbols = ['HDFCBANK', 'ICICIBANK', 'SBIN', 'KOTAKBANK', 'AXISBANK']
+        nifty_symbols = ['RELIANCE', 'HDFCBANK', 'TCS', 'BHARTIARTL', 'ICICIBANK', 'SBIN', 'BAJFINANCE', 'INFY', 'HINDUNILVR', 'ITC']
+        bank_symbols = ['HDFCBANK', 'ICICIBANK', 'SBIN', 'KOTAKBANK', 'AXISBANK', 'BANKBARODA']
         
-        # Get LTP data for all symbols
-        all_symbols = list(set(nifty_symbols + bank_symbols))
-        logger.info(f"🔍 Attempting to fetch live data for symbols: {all_symbols}")
-        ltp_data = self.get_ltp_data(all_symbols)
-        logger.info(f"📊 Received live prices for {len(ltp_data)} symbols: {ltp_data}")
+        # Create a mapping of found symbols to their data
+        symbol_data_map = {}
         
-        live_price_count = 0
-        sample_price_count = 0
-        
-        for item in raw_data:
-            symbol = item.get('tradingSymbol', '').upper()
+        # Process raw market data to extract relevant symbols
+        for item in raw_market_data:
+            trading_symbol = item.get('tradingSymbol', '').upper()
             
-            # Check if it's a NIFTY stock
-            for nifty_symbol in nifty_symbols:
-                if nifty_symbol in symbol:
-                    price = ltp_data.get(nifty_symbol)
-                    if price is None:
-                        price = self.get_sample_price(nifty_symbol)
-                        sample_price_count += 1
-                        logger.warning(f"📊 Using SAMPLE price for {nifty_symbol}: ₹{price}")
-                    else:
-                        live_price_count += 1
-                        logger.info(f"💰 Using LIVE price for {nifty_symbol}: ₹{price}")
-                    
-                    pcr = self.calculate_pcr_ratio(nifty_symbol)
-                    
-                    nifty_data.append({
-                        'symbol': nifty_symbol,
+            # Extract base symbol from futures/options symbol (e.g., HDFCBANK25JAN24FUT -> HDFCBANK)
+            base_symbol = self.extract_base_symbol(trading_symbol)
+            
+            if base_symbol and (base_symbol in nifty_symbols or base_symbol in bank_symbols):
+                if base_symbol not in symbol_data_map:
+                    symbol_data_map[base_symbol] = {
+                        'symbol': base_symbol,
                         'change': item.get('percentChange', 0),
                         'oi_change': item.get('netChangeOpnInterest', 0),
-                        'weight': self.get_weight(nifty_symbol, 'nifty'),
-                        'current_price': price,
-                        'pcr_ratio': pcr
-                    })
-                    break
+                        'weight': self.get_weight(base_symbol, 'nifty' if base_symbol in nifty_symbols else 'bank'),
+                        'current_price': 0,  # Will be filled with LTP data
+                        'pcr_ratio': self.calculate_pcr_ratio(base_symbol)
+                    }
+                    logger.info(f"📊 Found market data for {base_symbol}: {item.get('percentChange', 0)}% change, OI: {item.get('netChangeOpnInterest', 0)}")
+        
+        # Now get live prices for all found symbols
+        found_symbols = list(symbol_data_map.keys())
+        if found_symbols:
+            logger.info(f"🔍 Getting live prices for found symbols: {found_symbols}")
+            live_prices = self.get_live_equity_prices(found_symbols)
             
-            # Check if it's a Bank NIFTY stock
-            for bank_symbol in bank_symbols:
-                if bank_symbol in symbol:
-                    price = ltp_data.get(bank_symbol)
-                    if price is None:
-                        price = self.get_sample_price(bank_symbol)
-                        sample_price_count += 1
-                        logger.warning(f"📊 Using SAMPLE price for {bank_symbol}: ₹{price}")
-                    else:
-                        live_price_count += 1
-                        logger.info(f"💰 Using LIVE price for {bank_symbol}: ₹{price}")
-                    
-                    pcr = self.calculate_pcr_ratio(bank_symbol)
-                    
-                    bank_data.append({
-                        'symbol': bank_symbol,
-                        'change': item.get('percentChange', 0),
-                        'oi_change': item.get('netChangeOpnInterest', 0),
-                        'weight': self.get_weight(bank_symbol, 'bank'),
-                        'current_price': price,
-                        'pcr_ratio': pcr
-                    })
+            # Update symbol data with live prices
+            for symbol in found_symbols:
+                if symbol in live_prices:
+                    symbol_data_map[symbol]['current_price'] = live_prices[symbol]
+                    logger.info(f"💰 Updated {symbol} with live price: ₹{live_prices[symbol]}")
+                else:
+                    symbol_data_map[symbol]['current_price'] = self.get_sample_price(symbol)
+                    logger.warning(f"📊 Using sample price for {symbol}: ₹{symbol_data_map[symbol]['current_price']}")
+        
+        # Separate into NIFTY and Bank data
+        for symbol, data in symbol_data_map.items():
+            if symbol in nifty_symbols:
+                nifty_data.append(data)
+            elif symbol in bank_symbols:
+                bank_data.append(data)
+        
+        # Fill remaining slots with sample data if needed
+        if len(nifty_data) < 8:
+            for sample_stock in SAMPLE_NIFTY_DATA:
+                if sample_stock['symbol'] not in [d['symbol'] for d in nifty_data]:
+                    nifty_data.append(sample_stock)
+                    logger.info(f"📊 Added sample data for {sample_stock['symbol']}")
+                if len(nifty_data) >= 10:
                     break
         
-        # If we don't have enough real data, supplement with sample data
-        if len(nifty_data) < 5:
-            sample_data = SAMPLE_NIFTY_DATA[:10-len(nifty_data)]
-            nifty_data.extend(sample_data)
-        
-        if len(bank_data) < 3:
-            sample_data = SAMPLE_BANK_DATA[:6-len(bank_data)]
-            bank_data.extend(sample_data)
+        if len(bank_data) < 4:
+            for sample_bank in SAMPLE_BANK_DATA:
+                if sample_bank['symbol'] not in [d['symbol'] for d in bank_data]:
+                    bank_data.append(sample_bank)
+                    logger.info(f"📊 Added sample data for {sample_bank['symbol']}")
+                if len(bank_data) >= 6:
+                    break
         
         # Calculate overall PCR for indices
         overall_nifty_pcr = self.calculate_index_pcr(nifty_data[:10])
         overall_bank_pcr = self.calculate_index_pcr(bank_data[:6])
         
-        logger.info(f"📈 Price Summary: {live_price_count} LIVE prices, {sample_price_count} SAMPLE prices")
+        live_count = len(found_symbols)
+        total_count = len(nifty_data) + len(bank_data)
         
-        data_source = f"Live Data ({live_price_count}/{live_price_count + sample_price_count} prices)" if live_price_count > 0 else "Sample Data"
+        logger.info(f"📈 Data Summary: {live_count} symbols with LIVE market data, {total_count - live_count} with sample data")
+        
+        data_source = f"Live Market Data ({live_count}/{total_count} symbols)" if live_count > 0 else "Sample Data"
         
         return {
             'nifty_data': nifty_data[:10],
@@ -342,6 +365,75 @@ class SimpleAngelClient:
             'data_source': data_source,
             'timestamp': datetime.now().strftime("%H:%M:%S")
         }
+    
+    def extract_base_symbol(self, trading_symbol):
+        """Extract base symbol from futures/options trading symbol"""
+        # Examples: HDFCBANK25JAN24FUT -> HDFCBANK, RELIANCE25JAN24CE -> RELIANCE
+        import re
+        
+        # Remove common suffixes and date patterns
+        base_symbol = re.sub(r'\d{2}[A-Z]{3}\d{2}(FUT|CE|PE)$', '', trading_symbol)
+        base_symbol = re.sub(r'(FUT|CE|PE)$', '', base_symbol)
+        
+        logger.debug(f"🔍 Extracted '{base_symbol}' from '{trading_symbol}'")
+        return base_symbol if base_symbol else None
+    
+    def get_live_equity_prices(self, symbols):
+        """Get live equity prices using LTP API"""
+        if not self.authenticated:
+            return {}
+        
+        try:
+            headers = {
+                'Authorization': f'Bearer {self.auth_token}',
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-UserType': 'USER',
+                'X-SourceID': 'WEB',
+                'X-PrivateKey': API_KEY
+            }
+            
+            live_prices = {}
+            
+            for symbol in symbols:
+                try:
+                    symbol_token = self.get_symbol_token(symbol)
+                    if not symbol_token:
+                        continue
+                    
+                    ltp_request = {
+                        "exchange": "NSE",
+                        "tradingsymbol": symbol,
+                        "symboltoken": symbol_token
+                    }
+                    
+                    response = requests.post(
+                        "https://apiconnect.angelone.in/rest/secure/angelbroking/order/v1/getLTP",
+                        json=ltp_request,
+                        headers=headers,
+                        timeout=5
+                    )
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        if result.get('status') and result.get('data'):
+                            price = float(result['data']['ltp'])
+                            live_prices[symbol] = price
+                            logger.info(f"✅ Live price for {symbol}: ₹{price}")
+                        else:
+                            logger.warning(f"⚠️ No LTP data for {symbol}: {result}")
+                    else:
+                        logger.warning(f"⚠️ LTP API failed for {symbol}: {response.status_code}")
+                        
+                except Exception as e:
+                    logger.error(f"❌ Error getting LTP for {symbol}: {str(e)}")
+                    continue
+            
+            return live_prices
+            
+        except Exception as e:
+            logger.error(f"❌ Live equity prices fetch failed: {str(e)}")
+            return {}
     
     def get_sample_price(self, symbol):
         """Get sample price for a symbol - updated with current market levels"""
@@ -462,22 +554,56 @@ def debug_api():
     }
     
     if client.authenticated:
-        # Try to get live prices for a few symbols
-        test_symbols = ['RELIANCE', 'INFY', 'HDFCBANK']
-        live_prices = client.get_ltp_data(test_symbols)
-        debug_info['live_prices'] = live_prices
-        debug_info['live_price_count'] = len(live_prices)
+        try:
+            # Test the gainersLosers API
+            headers = {
+                'Authorization': f'Bearer {client.auth_token}',
+                'Content-Type': 'application/json',
+                'Accept': 'application/json',
+                'X-UserType': 'USER',
+                'X-SourceID': 'WEB',
+                'X-PrivateKey': API_KEY
+            }
+            
+            # Test OI Gainers API
+            response = requests.post(
+                "https://apiconnect.angelone.in/rest/secure/angelbroking/marketData/v1/gainersLosers",
+                json={"datatype": "PercOIGainers", "expirytype": "NEAR"},
+                headers=headers,
+                timeout=10
+            )
+            
+            debug_info['oi_gainers_api'] = {
+                'status_code': response.status_code,
+                'response_status': response.json().get('status') if response.status_code == 200 else False,
+                'data_count': len(response.json().get('data', [])) if response.status_code == 200 and response.json().get('status') else 0
+            }
+            
+            if response.status_code == 200 and response.json().get('status'):
+                sample_data = response.json().get('data', [])[:3]
+                debug_info['sample_market_data'] = sample_data
+            
+            # Test live equity prices for a few symbols
+            test_symbols = ['RELIANCE', 'INFY', 'HDFCBANK']
+            live_prices = client.get_live_equity_prices(test_symbols)
+            debug_info['live_equity_prices'] = live_prices
+            debug_info['live_price_count'] = len(live_prices)
+            
+        except Exception as e:
+            debug_info['api_test_error'] = str(e)
     else:
         debug_info['error'] = "Not authenticated with Angel One API"
     
     return f"""
     <html>
     <head><title>Debug API Status</title></head>
-    <body style="font-family: monospace; padding: 20px;">
+    <body style="font-family: monospace; padding: 20px; background: #f5f5f5;">
         <h2>🔍 Angel One API Debug Info</h2>
-        <pre>{debug_info}</pre>
+        <div style="background: white; padding: 20px; border-radius: 8px; margin: 10px 0;">
+            <pre style="white-space: pre-wrap; word-wrap: break-word;">{debug_info}</pre>
+        </div>
         <br>
-        <a href="/">← Back to Dashboard</a>
+        <a href="/" style="padding: 10px 20px; background: #007bff; color: white; text-decoration: none; border-radius: 5px;">← Back to Dashboard</a>
     </body>
     </html>
     """
