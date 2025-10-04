@@ -221,60 +221,69 @@ class SimpleAngelClient:
             return self.get_sample_data()
     
     def fetch_real_data(self):
-        """Fetch real data from Angel One API using gainersLosers endpoint"""
-        headers = {
-            'Authorization': f'Bearer {self.auth_token}',
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'X-UserType': 'USER',
-            'X-SourceID': 'WEB',
-            'X-PrivateKey': API_KEY
+        """Fetch real data by getting live prices for key stocks directly"""
+        logger.info("🔍 Fetching live market data using direct price fetching...")
+        
+        # Define key stocks for both indices
+        nifty_symbols = ['RELIANCE', 'HDFCBANK', 'TCS', 'BHARTIARTL', 'ICICIBANK', 'SBIN', 'BAJFINANCE', 'INFY', 'HINDUNILVR', 'ITC']
+        bank_symbols = ['HDFCBANK', 'ICICIBANK', 'SBIN', 'KOTAKBANK', 'AXISBANK', 'BANKBARODA']
+        
+        # Get all unique symbols
+        all_symbols = list(set(nifty_symbols + bank_symbols))
+        
+        # Get live prices for all symbols
+        logger.info(f"🔍 Getting live prices for {len(all_symbols)} symbols")
+        live_prices = self.get_live_equity_prices(all_symbols)
+        
+        # Create data using sample structure but with live prices
+        nifty_data = []
+        bank_data = []
+        
+        # Build NIFTY data with live prices
+        for sample_stock in SAMPLE_NIFTY_DATA:
+            symbol = sample_stock['symbol']
+            stock_data = sample_stock.copy()
+            
+            if symbol in live_prices:
+                stock_data['current_price'] = live_prices[symbol]
+                logger.info(f"✅ Updated {symbol} with live price: ₹{live_prices[symbol]}")
+            else:
+                logger.info(f"📊 Using sample price for {symbol}: ₹{stock_data['current_price']}")
+            
+            nifty_data.append(stock_data)
+        
+        # Build Bank NIFTY data with live prices
+        for sample_bank in SAMPLE_BANK_DATA:
+            symbol = sample_bank['symbol']
+            bank_stock_data = sample_bank.copy()
+            
+            if symbol in live_prices:
+                bank_stock_data['current_price'] = live_prices[symbol]
+                logger.info(f"✅ Updated {symbol} with live price: ₹{live_prices[symbol]}")
+            else:
+                logger.info(f"� Using sample price for {symbol}: ₹{bank_stock_data['current_price']}")
+            
+            bank_data.append(bank_stock_data)
+        
+        # Calculate overall PCR for indices
+        overall_nifty_pcr = self.calculate_index_pcr(nifty_data)
+        overall_bank_pcr = self.calculate_index_pcr(bank_data)
+        
+        live_count = len(live_prices)
+        total_count = len(nifty_data) + len(bank_data)
+        
+        logger.info(f"📈 Data Summary: {live_count} symbols with LIVE prices, {total_count - live_count} with sample prices")
+        
+        data_source = f"Live Prices ({live_count}/{len(all_symbols)} stocks)" if live_count > 0 else "Sample Data"
+        
+        return {
+            'nifty_data': nifty_data,
+            'bank_data': bank_data,
+            'nifty_pcr': overall_nifty_pcr,
+            'bank_pcr': overall_bank_pcr,
+            'data_source': data_source,
+            'timestamp': datetime.now().strftime("%H:%M:%S")
         }
-        
-        logger.info("🔍 Fetching live market data from Angel One API...")
-        
-        # Get comprehensive market data from multiple endpoints
-        all_market_data = []
-        
-        # Fetch different types of market data
-        data_types = [
-            "PercOIGainers",    # OI Gainers
-            "PercPriceGainers", # Price Gainers
-            "PercOILosers",     # OI Losers
-        ]
-        
-        for data_type in data_types:
-            try:
-                response = requests.post(
-                    "https://apiconnect.angelone.in/rest/secure/angelbroking/marketData/v1/gainersLosers",
-                    json={"datatype": data_type, "expirytype": "NEAR"},
-                    headers=headers,
-                    timeout=10
-                )
-                
-                logger.info(f"📡 {data_type} API response: Status {response.status_code}")
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    if data.get('status') and data.get('data'):
-                        market_data = data.get('data', [])
-                        all_market_data.extend(market_data)
-                        logger.info(f"✅ Fetched {len(market_data)} records from {data_type}")
-                    else:
-                        logger.warning(f"⚠️ {data_type} API returned no data: {data}")
-                else:
-                    logger.warning(f"⚠️ {data_type} API failed: {response.status_code} - {response.text}")
-                    
-            except Exception as e:
-                logger.error(f"❌ Error fetching {data_type}: {str(e)}")
-                continue
-        
-        if all_market_data:
-            logger.info(f"✅ Total market records fetched: {len(all_market_data)}")
-            return self.process_real_data(all_market_data)
-        else:
-            logger.warning("⚠️ No real market data fetched, using sample data")
-            return self.get_sample_data()
     
     def process_real_data(self, raw_market_data):
         """Process real API data from gainersLosers endpoint"""
@@ -379,7 +388,7 @@ class SimpleAngelClient:
         return base_symbol if base_symbol else None
     
     def get_live_equity_prices(self, symbols):
-        """Get live equity prices using LTP API"""
+        """Get live equity prices using candleData API which is more reliable"""
         if not self.authenticated:
             return {}
         
@@ -390,45 +399,73 @@ class SimpleAngelClient:
                 'Accept': 'application/json',
                 'X-UserType': 'USER',
                 'X-SourceID': 'WEB',
+                'X-ClientLocalIP': '192.168.1.1',
+                'X-ClientPublicIP': '192.168.1.1',
+                'X-MACAddress': '00:00:00:00:00:00',
                 'X-PrivateKey': API_KEY
             }
             
             live_prices = {}
             
+            # Get current date for candle data
+            from datetime import datetime, timedelta
+            today = datetime.now()
+            yesterday = today - timedelta(days=1)
+            
             for symbol in symbols:
                 try:
                     symbol_token = self.get_symbol_token(symbol)
                     if not symbol_token:
+                        logger.warning(f"⚠️ No symbol token found for {symbol}")
                         continue
                     
-                    ltp_request = {
+                    # Use 1 minute candle data to get latest price
+                    candle_request = {
                         "exchange": "NSE",
-                        "tradingsymbol": symbol,
-                        "symboltoken": symbol_token
+                        "symboltoken": symbol_token,
+                        "interval": "ONE_MINUTE",
+                        "fromdate": yesterday.strftime("%Y-%m-%d %H:%M"),
+                        "todate": today.strftime("%Y-%m-%d %H:%M")
                     }
                     
-                    response = requests.post(
-                        "https://apiconnect.angelone.in/rest/secure/angelbroking/order/v1/getLTP",
-                        json=ltp_request,
+                    logger.info(f"🔍 Getting candle data for {symbol} with token {symbol_token}")
+                    candle_response = requests.post(
+                        "https://apiconnect.angelone.in/rest/secure/angelbroking/historical/v1/getCandleData",
+                        json=candle_request,
                         headers=headers,
-                        timeout=5
+                        timeout=10
                     )
                     
-                    if response.status_code == 200:
-                        result = response.json()
-                        if result.get('status') and result.get('data'):
-                            price = float(result['data']['ltp'])
-                            live_prices[symbol] = price
-                            logger.info(f"✅ Live price for {symbol}: ₹{price}")
-                        else:
-                            logger.warning(f"⚠️ No LTP data for {symbol}: {result}")
+                    logger.info(f"📡 Candle API response for {symbol}: Status {candle_response.status_code}")
+                    
+                    if candle_response.status_code == 200:
+                        try:
+                            candle_result = candle_response.json()
+                            logger.info(f"📊 Candle response status for {symbol}: {candle_result.get('status')}")
+                            
+                            if candle_result.get('status') and candle_result.get('data'):
+                                candle_data = candle_result['data']
+                                if candle_data:
+                                    # Get the latest candle (last item in array)
+                                    latest_candle = candle_data[-1]
+                                    # Candle format: [timestamp, open, high, low, close, volume]
+                                    latest_price = float(latest_candle[4])  # Close price
+                                    live_prices[symbol] = latest_price
+                                    logger.info(f"✅ Live price for {symbol}: ₹{latest_price} (from candle data)")
+                                else:
+                                    logger.warning(f"⚠️ No candle data for {symbol}")
+                            else:
+                                logger.warning(f"⚠️ Candle API returned no data for {symbol}: {candle_result}")
+                        except Exception as candle_json_error:
+                            logger.error(f"❌ Candle JSON parse error for {symbol}: {str(candle_json_error)}, Response: {candle_response.text[:200]}")
                     else:
-                        logger.warning(f"⚠️ LTP API failed for {symbol}: {response.status_code}")
+                        logger.warning(f"⚠️ Candle API failed for {symbol}: {candle_response.status_code} - {candle_response.text[:200]}")
                         
                 except Exception as e:
-                    logger.error(f"❌ Error getting LTP for {symbol}: {str(e)}")
+                    logger.error(f"❌ Error processing symbol {symbol}: {str(e)}")
                     continue
             
+            logger.info(f"📈 Successfully fetched live prices for {len(live_prices)} symbols: {list(live_prices.keys())}")
             return live_prices
             
         except Exception as e:
